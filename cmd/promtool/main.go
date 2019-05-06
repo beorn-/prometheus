@@ -40,6 +40,8 @@ import (
 	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/pkg/rulefmt"
 	"github.com/prometheus/prometheus/util/promlint"
+
+	"github.com/prometheus/prometheus/util/targetstats"
 )
 
 func main() {
@@ -102,6 +104,11 @@ func main() {
 		"The unit test file.",
 	).Required().ExistingFiles()
 
+	statsCmd := app.Command("stats", "Statistics from exporter output.")
+	statsMetricsCmd := statsCmd.Command("metrics", statsMetricsUsage)
+	statsMetricsSort := statsMetricsCmd.Arg(
+		"sort-by", "Choose which kind of sort you want to use for output.").Required().String()
+
 	parsedCmd := kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	var p printer
@@ -145,6 +152,9 @@ func main() {
 
 	case testRulesCmd.FullCommand():
 		os.Exit(RulesUnitTest(*testRulesFiles...))
+
+	case statsMetricsCmd.FullCommand():
+		os.Exit(statsMetrics(*statsMetricsSort))
 	}
 }
 
@@ -311,6 +321,16 @@ examples:
 $ cat metrics.prom | promtool check metrics
 
 $ curl -s http://localhost:9090/metrics | promtool check metrics
+`)
+
+var statsMetricsUsage = strings.TrimSpace(`
+Pass Prometheus metrics over stdin to lint them for analysis and statistics.
+
+examples:
+
+$ cat metrics.prom | promtool stats metrics
+
+$ curl -s http://localhost:9090/metrics | promtool stats metrics
 `)
 
 // CheckMetrics performs a linting pass on input metrics.
@@ -522,6 +542,39 @@ func parseTime(s string) (time.Time, error) {
 		return t, nil
 	}
 	return time.Time{}, errors.Errorf("cannot parse %q to a valid timestamp", s)
+}
+
+// Stats compiles statistics on input metrics.
+func statsMetrics(sortBy string) int {
+	s := targetstats.New(os.Stdin)
+	stats, err := s.Analyze(sortBy)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error while analyzing:", err)
+		return 1
+	}
+
+	fmt.Println("Generic statistics")
+	fmt.Println("--------------------------")
+	for _, p := range stats.Generic {
+		fmt.Fprintln(os.Stdout, p.Name, p.Value)
+	}
+	fmt.Println("")
+
+	fmt.Println("Data types statistics")
+	fmt.Println("--------------------------")
+	for _, p := range stats.Types {
+		fmt.Fprintln(os.Stdout, p.Name, p.Value)
+	}
+	fmt.Println("")
+
+	fmt.Println("Dataseries statistics")
+	fmt.Println("--------------------------")
+	for _, p := range stats.Series {
+		fmt.Fprintln(os.Stdout, p.Name, p.Value)
+	}
+	fmt.Println("")
+
+	return 0
 }
 
 type endpointsGroup struct {
